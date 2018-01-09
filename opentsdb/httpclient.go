@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"time"
+	"strings"
 )
 
 const (
@@ -69,7 +70,7 @@ func (hc *HttpClient) getURL() string {
 }
 
 // Save saves data points in maxChunkLength size.
-func (hc *HttpClient) Save(dps []DataPoint) error {
+func (hc *HttpClient) Save(dps []DataPoint, header string) error {
 	url := hc.getURL()
 
 	loop := len(dps) / maxChunkLength
@@ -79,7 +80,7 @@ func (hc *HttpClient) Save(dps []DataPoint) error {
 		end += maxChunkLength
 		chunk := dps[start:end]
 		start = end
-		err := hc.post(url, chunk)
+		err := hc.post(url, chunk, header)
 		if err != nil {
 			return err
 		}
@@ -89,19 +90,30 @@ func (hc *HttpClient) Save(dps []DataPoint) error {
 	if remainder > 0 {
 		end = start + remainder
 		chunk := dps[start:end]
-		return hc.post(url, chunk)
+		return hc.post(url, chunk, header)
 	}
 	return nil
 }
 
 // post stores a slice of Datapoint to OpenTSDB
-func (hc *HttpClient) post(url string, dps []DataPoint) error {
+func (hc *HttpClient) post(url string, dps []DataPoint, header string) error {
 	buf, err := json.Marshal(dps)
 	if err != nil {
 		return err
 	}
 
-	resp, err := hc.httpClient.Post(url, contentTypeJSON, bytes.NewReader(buf))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+
+	if header != "" {
+		kv := strings.Split(header, "=")
+		req.Header.Set(kv[0], kv[1])
+	}
+	req.Header.Set("Content-Type", contentTypeJSON)
+
+	resp, err := hc.httpClient.Do(req)
 	if err != nil {
 		return err
 	}

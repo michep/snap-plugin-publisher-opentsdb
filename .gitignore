@@ -39,3 +39,4 @@ vendor/
 
 # ignore build artifacts
 build/
+.idea

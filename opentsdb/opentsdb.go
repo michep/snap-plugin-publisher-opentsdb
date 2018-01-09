@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/intelsdi-x/snap/control/plugin"
 	"github.com/intelsdi-x/snap/control/plugin/cpolicy"
@@ -72,6 +72,11 @@ func (p *opentsdbPublisher) GetConfigPolicy() (*cpolicy.ConfigPolicy, error) {
 	r2.Description = "Opentsdb port"
 	config.Add(r2)
 
+	r3, err := cpolicy.NewStringRule("header", false)
+	handleErr(err)
+	r3.Description = "Opentsdb additional HTTP header in format: header_name=header_value"
+	config.Add(r3)
+
 	cp.Add([]string{""}, config)
 	return cp, nil
 }
@@ -80,6 +85,7 @@ func (p *opentsdbPublisher) GetConfigPolicy() (*cpolicy.ConfigPolicy, error) {
 func (p *opentsdbPublisher) Publish(contentType string, content []byte, config map[string]ctypes.ConfigValue) error {
 	logger := log.New()
 	var metrics []plugin.MetricType
+	var header string
 
 	switch contentType {
 	case plugin.SnapGOBContentType:
@@ -102,6 +108,13 @@ func (p *opentsdbPublisher) Publish(contentType string, content []byte, config m
 	u, err := url.Parse(fmt.Sprintf("%s:%d", config["host"].(ctypes.ConfigValueStr).Value, config["port"].(ctypes.ConfigValueInt).Value))
 	if err != nil {
 		handleErr(err)
+	}
+
+	if h, ok := config["header"]; ok {
+		header = h.(ctypes.ConfigValueStr).Value
+		if !strings.Contains(header, "=") {
+			header = ""
+		}
 	}
 
 	var pts []DataPoint
@@ -154,7 +167,7 @@ func (p *opentsdbPublisher) Publish(contentType string, content []byte, config m
 
 	td := time.Duration(timeout * time.Second)
 	con := NewClient(u.String(), td)
-	err = con.Save(pts)
+	err = con.Save(pts, header)
 	if err != nil {
 		logger.Printf("Error: '%s' posting metrics: %+v", err.Error(), metrics)
 		return err
