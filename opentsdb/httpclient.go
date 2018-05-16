@@ -55,6 +55,9 @@ func NewClient(url string, timeout time.Duration) *HttpClient {
 		url: url,
 		httpClient: &http.Client{
 			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 500,
+			},
 		},
 		userAgent: userAgent,
 	}
