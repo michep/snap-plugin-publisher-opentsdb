@@ -20,13 +20,10 @@ limitations under the License.
 package main
 
 import (
-	"os"
-
+	"github.com/intelsdi-x/snap-plugin-lib-go/v1/plugin"
 	"github.com/intelsdi-x/snap-plugin-publisher-opentsdb/opentsdb"
-	"github.com/intelsdi-x/snap/control/plugin"
 )
 
 func main() {
-	meta := opentsdb.Meta()
-	plugin.Start(meta, opentsdb.NewOpentsdbPublisher(), os.Args[1])
+	plugin.StartPublisher(opentsdb.NewOpentsdbPublisher(), opentsdb.Name, opentsdb.Version)
 }

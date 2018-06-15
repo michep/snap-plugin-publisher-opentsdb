@@ -28,20 +28,18 @@ import (
 	"net/url"
 	"os"
 	"time"
-	"strings"
 )
 
 const (
 	putEndPoint     = "/api/put"
 	contentTypeJSON = "application/json"
-	userAgent       = "snap-publisher"
-	maxChunkLength  = 25
 )
 
 type HttpClient struct {
 	url        string
 	httpClient *http.Client
 	userAgent  string
+	chunksize  int
 }
 
 type Client interface {
@@ -50,16 +48,13 @@ type Client interface {
 
 //NewClient creates an instance of HttpClient which times out at
 //the givin duration.
-func NewClient(url string, timeout time.Duration) *HttpClient {
+func NewClient(url string, chunksize int, timeout int) *HttpClient {
 	return &HttpClient{
 		url: url,
 		httpClient: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxIdleConnsPerHost: 500,
-			},
+			Timeout: time.Duration(timeout) * time.Second,
 		},
-		userAgent: userAgent,
+		chunksize: chunksize,
 	}
 }
 
@@ -73,33 +68,33 @@ func (hc *HttpClient) getURL() string {
 }
 
 // Save saves data points in maxChunkLength size.
-func (hc *HttpClient) Save(dps []DataPoint, header string) error {
-	url := hc.getURL()
+func (hc *HttpClient) Save(dps []DataPoint) error {
+	u := hc.getURL()
 
-	loop := len(dps) / maxChunkLength
+	loop := len(dps) / hc.chunksize
 	start := 0
 	end := start
 	for i := 0; i < loop; i++ {
-		end += maxChunkLength
+		end += hc.chunksize
 		chunk := dps[start:end]
 		start = end
-		err := hc.post(url, chunk, header)
+		err := hc.post(u, chunk)
 		if err != nil {
 			return err
 		}
 	}
 
-	remainder := len(dps) % maxChunkLength
+	remainder := len(dps) % hc.chunksize
 	if remainder > 0 {
 		end = start + remainder
 		chunk := dps[start:end]
-		return hc.post(url, chunk, header)
+		return hc.post(u, chunk)
 	}
 	return nil
 }
 
 // post stores a slice of Datapoint to OpenTSDB
-func (hc *HttpClient) post(url string, dps []DataPoint, header string) error {
+func (hc *HttpClient) post(url string, dps []DataPoint) error {
 	buf, err := json.Marshal(dps)
 	if err != nil {
 		return err
@@ -110,10 +105,6 @@ func (hc *HttpClient) post(url string, dps []DataPoint, header string) error {
 		return err
 	}
 
-	if header != "" {
-		kv := strings.Split(header, "=")
-		req.Header.Set(kv[0], kv[1])
-	}
 	req.Header.Set("Content-Type", contentTypeJSON)
 
 	resp, err := hc.httpClient.Do(req)
@@ -145,6 +136,6 @@ func (hc *HttpClient) post(url string, dps []DataPoint, header string) error {
 		}
 
 		fmt.Fprintf(os.Stderr, "Failed to post data to OpenTSDB: %s", details)
-		return fmt.Errorf("Failed to post data to OpenTSDB: %v. For more information check stderr file.", msg)
+		return fmt.Errorf("failed to post data to OpenTSDB: %v. For more information check stderr file", msg)
 	}
 }

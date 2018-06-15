@@ -20,35 +20,20 @@ limitations under the License.
 package opentsdb
 
 import (
-	"bytes"
-	"encoding/gob"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
+	"github.com/intelsdi-x/snap-plugin-lib-go/v1/plugin"
 	log "github.com/sirupsen/logrus"
-
-	"github.com/intelsdi-x/snap/control/plugin"
-	"github.com/intelsdi-x/snap/control/plugin/cpolicy"
-	"github.com/intelsdi-x/snap/core"
-	"github.com/intelsdi-x/snap/core/ctypes"
 )
 
 const (
-	name       = "opentsdb"
-	version    = 9
-	pluginType = plugin.PublisherPluginType
-	timeout    = 5
-	host       = "host"
-	source     = "source"
+	Name               = "opentsdb"
+	Version            = 10
+	hostTag            = "host"
+	pluginrunningonTag = "plugin_running_on"
 )
-
-// Meta returns a plugin meta data
-func Meta() *plugin.PluginMeta {
-	return plugin.NewPluginMeta(name, version, pluginType, []string{plugin.SnapGOBContentType}, []string{plugin.SnapGOBContentType})
-}
 
 //NewOpentsdbPublisher returns an instance of the OpenTSDB publisher
 func NewOpentsdbPublisher() *opentsdbPublisher {
@@ -56,74 +41,52 @@ func NewOpentsdbPublisher() *opentsdbPublisher {
 }
 
 type opentsdbPublisher struct {
+	client *HttpClient
 }
 
-func (p *opentsdbPublisher) GetConfigPolicy() (*cpolicy.ConfigPolicy, error) {
-	cp := cpolicy.New()
-	config := cpolicy.NewPolicyNode()
-
-	r1, err := cpolicy.NewStringRule("host", true)
-	handleErr(err)
-	r1.Description = "Opentsdb host"
-	config.Add(r1)
-
-	r2, err := cpolicy.NewIntegerRule("port", true)
-	handleErr(err)
-	r2.Description = "Opentsdb port"
-	config.Add(r2)
-
-	r3, err := cpolicy.NewStringRule("header", false)
-	handleErr(err)
-	r3.Description = "Opentsdb additional HTTP header in format: header_name=header_value"
-	config.Add(r3)
-
-	cp.Add([]string{""}, config)
-	return cp, nil
+func (p *opentsdbPublisher) GetConfigPolicy() (plugin.ConfigPolicy, error) {
+	cp := plugin.NewConfigPolicy()
+	cp.AddNewStringRule([]string{""}, "host", true)
+	cp.AddNewIntRule([]string{""}, "port", true)
+	cp.AddNewIntRule([]string{""}, "chunksize", false, plugin.SetDefaultInt(25))
+	cp.AddNewIntRule([]string{""}, "timeout", false, plugin.SetDefaultInt(5))
+	return *cp, nil
 }
 
 // Publish publishes metric data to opentsdb.
-func (p *opentsdbPublisher) Publish(contentType string, content []byte, config map[string]ctypes.ConfigValue) error {
+func (p *opentsdbPublisher) Publish(mts []plugin.Metric, config plugin.Config) error {
 	logger := log.New()
-	var metrics []plugin.MetricType
-	var header string
-
-	switch contentType {
-	case plugin.SnapGOBContentType:
-		dec := gob.NewDecoder(bytes.NewBuffer(content))
-		if err := dec.Decode(&metrics); err != nil {
-			logger.Printf("Error decoding GOB: error=%v content=%v", err, content)
-			return err
-		}
-	case plugin.SnapJSONContentType:
-		err := json.Unmarshal(content, &metrics)
+	if p.client == nil {
+		host, err := config.GetString("host")
 		if err != nil {
-			logger.Printf("Error decoding JSON: error=%v content=%v", err, content)
-			return err
+			handleErr(err)
 		}
-	default:
-		logger.Printf("Error unknown content type '%v'", contentType)
-		return fmt.Errorf("Unknown content type '%s'", contentType)
-	}
-
-	u, err := url.Parse(fmt.Sprintf("%s:%d", config["host"].(ctypes.ConfigValueStr).Value, config["port"].(ctypes.ConfigValueInt).Value))
-	if err != nil {
-		handleErr(err)
-	}
-
-	if h, ok := config["header"]; ok {
-		header = h.(ctypes.ConfigValueStr).Value
-		if !strings.Contains(header, "=") {
-			header = ""
+		port, err := config.GetInt("port")
+		if err != nil {
+			handleErr(err)
 		}
+		chunksize, err := config.GetInt("chunksize")
+		if err != nil {
+			handleErr(err)
+		}
+		timeout, err := config.GetInt("timeout")
+		if err != nil {
+			handleErr(err)
+		}
+		u, err := url.Parse(fmt.Sprintf("%s:%d", host, port))
+		if err != nil {
+			handleErr(err)
+		}
+
+		p.client = NewClient(u.String(), int(chunksize), int(timeout))
 	}
 
 	var pts []DataPoint
 	var temp DataPoint
-	var i = 0
-	for _, m := range metrics {
+	for _, m := range mts {
 		tempTags := make(map[string]StringValue)
-		isDynamic, indexes := m.Namespace().IsDynamic()
-		ns := m.Namespace().Strings()
+		isDynamic, indexes := m.Namespace.IsDynamic()
+		ns := m.Namespace.Strings()
 		if isDynamic {
 			for i, j := range indexes {
 				// The second return value from IsDynamic(), in this case `indexes`, is the index of
@@ -134,42 +97,39 @@ func (p *opentsdbPublisher) Publish(contentType string, content []byte, config m
 				//
 				// Remove "data" from the namespace and create a tag for it
 				ns = append(ns[:j-i], ns[j-i+1:]...)
-				tempTags[m.Namespace()[j].Name] = StringValue(m.Namespace()[j].Value)
+				tempTags[m.Namespace[j].Name] = StringValue(m.Namespace[j].Value)
 			}
 		}
 
-		tags := m.Tags()
-		for k, v := range tags {
+		for k, v := range m.Tags {
 			tempTags[k] = StringValue(v)
 		}
-		tempTags[host] = StringValue(tags[core.STD_TAG_PLUGIN_RUNNING_ON])
+
+		tempTags[hostTag] = StringValue(m.Tags[pluginrunningonTag])
 
 		temp = DataPoint{
 			Metric:    StringValue(strings.Join(ns, ".")),
-			Timestamp: m.Timestamp().Unix(),
-			Value:     m.Data(),
+			Timestamp: m.Timestamp.Unix(),
+			Value:     m.Data,
 			Tags:      tempTags,
 		}
 
 		// Omits invalid data points
 		if temp.Valid() {
 			pts = append(pts, temp)
-			i++
 		} else {
 			logger.Printf("Omitted invalid data point %s (non-numeric values not allowed in OpenTSDB)", temp.Metric)
 		}
 	}
 
 	if len(pts) == 0 {
-		logger.Printf("Info: '%s' posting metrics: %+v", "no valid data", metrics)
+		logger.Printf("Info: '%s' posting metrics: %+v", "no valid data", mts)
 		return nil
 	}
 
-	td := time.Duration(timeout * time.Second)
-	con := NewClient(u.String(), td)
-	err = con.Save(pts, header)
+	err := p.client.Save(pts)
 	if err != nil {
-		logger.Printf("Error: '%s' posting metrics: %+v", err.Error(), metrics)
+		logger.Printf("Error: '%s' posting metrics: %+v", err.Error(), mts)
 		return err
 	}
 
