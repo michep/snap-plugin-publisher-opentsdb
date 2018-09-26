@@ -36,7 +36,7 @@ const (
 )
 
 type HttpClient struct {
-	url        string
+	url        url.URL
 	httpClient *http.Client
 	userAgent  string
 	chunksize  int
@@ -48,7 +48,7 @@ type Client interface {
 
 //NewClient creates an instance of HttpClient which times out at
 //the givin duration.
-func NewClient(url string, chunksize int, timeout int) *HttpClient {
+func NewClient(url url.URL, chunksize int, timeout int) *HttpClient {
 	return &HttpClient{
 		url: url,
 		httpClient: &http.Client{
@@ -59,11 +59,8 @@ func NewClient(url string, chunksize int, timeout int) *HttpClient {
 }
 
 func (hc *HttpClient) getURL() string {
-	u := url.URL{
-		Scheme: "http",
-		Host:   hc.url,
-		Path:   putEndPoint,
-	}
+	u := hc.url
+	u.Path = putEndPoint
 	return u.String()
 }
 

@@ -78,7 +78,7 @@ func (p *opentsdbPublisher) Publish(mts []plugin.Metric, config plugin.Config) e
 			handleErr(err)
 		}
 
-		p.client = NewClient(u.String(), int(chunksize), int(timeout))
+		p.client = NewClient(*u, int(chunksize), int(timeout))
 	}
 
 	var pts []DataPoint
